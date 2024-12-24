@@ -5,8 +5,15 @@
   <title>JS Quote Form</title>
   <style>
     /* Basic styling for demonstration purposes */
+    #filtersContainer {
+      margin-bottom: 16px;
+    }
+    select {
+      margin-right: 12px;
+    }
     #searchContainer {
       margin-bottom: 16px;
+      position: relative;
     }
     #searchField {
       width: 200px;
@@ -29,11 +36,23 @@
     #resultArea {
       margin-top: 16px;
     }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      max-width: 700px;
+    }
+    table thead {
+      background-color: #f2f2f2;
+    }
+    table th, table td {
+      border: 1px solid #ccc;
+      padding: 8px;
+    }
     .error {
       color: red;
     }
 
-    /* Popup styles */
+    /* Popup (modal) styles */
     #quoteModal {
       display: none; 
       position: fixed; 
@@ -47,7 +66,7 @@
     }
     #quoteModalContent {
       background-color: #fefefe; 
-      margin: 15% auto; 
+      margin: 10% auto; 
       padding: 20px; 
       border: 1px solid #888; 
       width: 300px; 
@@ -68,16 +87,34 @@
 </head>
 <body>
 
-  <h1>Search Parts & Request Quote</h1>
-  <div id="searchContainer">
-    <input type="text" id="searchField" placeholder="Type part ID..." />
-    <div id="suggestions"></div>
-    <button id="searchBtn">Search</button>
+  <h1>Search R&O Capability / Part Number &amp; Request Quote</h1>
+
+  <!-- 1) FILTERS -->
+  <div id="filtersContainer">
+    <label for="descriptionSelect">R&O Capability / PN Description:</label>
+    <select id="descriptionSelect">
+      <option value="Any" selected>Any</option>
+      <!-- More options added dynamically -->
+    </select>
+
+    <label for="platformSelect">Aircraft / Engine Platform:</label>
+    <select id="platformSelect">
+      <option value="Any" selected>Any</option>
+      <!-- More options added dynamically -->
+    </select>
   </div>
 
+  <!-- 2) SEARCH & AUTOCOMPLETE -->
+  <div id="searchContainer">
+    <input type="text" id="searchField" placeholder="Type part number..." />
+    <div id="suggestions"></div>
+    <button id="searchBtn">Search R&O Capability / Part Number</button>
+  </div>
+
+  <!-- 3) RESULTS AREA (TABLE) -->
   <div id="resultArea"></div>
 
-  <!-- The Modal / Popup -->
+  <!-- 4) MODAL / POPUP -->
   <div id="quoteModal">
     <div id="quoteModalContent">
       <span id="closeModalBtn">&times;</span>
@@ -99,91 +136,223 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
   <script>
-    // =================================================
-    // 1) CONFIGURATION
-    // =================================================
-    // Local file (make sure to serve via HTTP server)
+    /*******************************************************
+     * CONFIGURATION
+     *******************************************************/
     const EXCEL_FILE_PATH = "Parts.xlsx";
+    
+    // Column headers in the Excel:
+    const PART_NUMBER_COL = "Part Number";
+    const DESCRIPTION_COL = "Description";
+    const PLATFORM_COL = "Aircraft / Engine Platform";
 
-    // If the column name changes (in your Excel file header), update this variable:
-    const PART_NUMBER_HEADER = "Part Number";
-
-    // This will hold the parsed Excel rows (as objects)
+    // This will hold the parsed Excel rows (array of objects)
     let excelData = [];
 
-    // =================================================
-    // 2) FETCH & PARSE THE EXCEL FILE
-    // =================================================
+    // Keep track of the current filters
+    let selectedDescription = "Any";
+    let selectedPlatform = "Any";
+
+    /*******************************************************
+     * 1) LOAD EXCEL DATA
+     *******************************************************/
     async function loadExcelData() {
       try {
         const response = await fetch(EXCEL_FILE_PATH);
         if (!response.ok) {
           throw new Error("Could not fetch the Excel file. Check your local server path or file name.");
         }
-
         const arrayBuffer = await response.arrayBuffer();
-
-        // Use SheetJS to read the file
+        // Parse with SheetJS
         const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: "array" });
-        // Assuming the first sheet has the relevant data
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
 
-        // Convert to JSON. { header:1 } would give arrays; we use default to get an array of objects.
+        // Convert to array of objects
         excelData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+        // Once loaded, populate the dropdown options
+        populateDropdowns();
       } catch (err) {
         console.error("Error loading Excel file:", err);
       }
     }
 
-    // Call this at the start (once the page is loaded)
+    // Call the loader once the page is loaded
     loadExcelData();
 
-    // =================================================
-    // 3) AUTOCOMPLETE SUGGESTIONS
-    // =================================================
+    /*******************************************************
+     * 2) POPULATE DROPDOWNS
+     *******************************************************/
+    const descriptionSelect = document.getElementById("descriptionSelect");
+    const platformSelect = document.getElementById("platformSelect");
+
+    function populateDropdowns() {
+      // Get unique values for Description
+      const uniqueDescriptions = [...new Set(excelData.map(row => row[DESCRIPTION_COL]))]
+        .filter(val => val) // remove empty
+        .sort();
+
+      // Get unique values for Platform
+      const uniquePlatforms = [...new Set(excelData.map(row => row[PLATFORM_COL]))]
+        .filter(val => val)
+        .sort();
+      
+      // Reset the dropdowns (keep "Any")
+      resetSelect(descriptionSelect);
+      resetSelect(platformSelect);
+
+      // Add each unique description
+      uniqueDescriptions.forEach(desc => {
+        const opt = document.createElement("option");
+        opt.value = desc;
+        opt.textContent = desc;
+        descriptionSelect.appendChild(opt);
+      });
+
+      // Add each unique platform
+      uniquePlatforms.forEach(plat => {
+        const opt = document.createElement("option");
+        opt.value = plat;
+        opt.textContent = plat;
+        platformSelect.appendChild(opt);
+      });
+    }
+
+    function resetSelect(selectElem) {
+      // Keep the first child "Any", remove others
+      while (selectElem.options.length > 1) {
+        selectElem.remove(1);
+      }
+    }
+
+    /*******************************************************
+     * 3) SYNC DROPDOWNS (DYNAMIC FILTERING)
+     *******************************************************/
+    descriptionSelect.addEventListener("change", (e) => {
+      selectedDescription = e.target.value;
+      // Filter the possible platform options based on selection
+      updatePlatformOptions();
+      // Also update the suggestions
+      updateSuggestions();
+      // Clear results
+      document.getElementById("resultArea").innerHTML = "";
+    });
+
+    platformSelect.addEventListener("change", (e) => {
+      selectedPlatform = e.target.value;
+      // Filter the possible description options based on selection
+      updateDescriptionOptions();
+      // Update suggestions
+      updateSuggestions();
+      // Clear results
+      document.getElementById("resultArea").innerHTML = "";
+    });
+
+    function updatePlatformOptions() {
+      // We want to keep track of the user's old selection if valid
+      const oldPlatformSelection = platformSelect.value;
+      const filteredData = getFilteredData({ ignorePlatform: true });
+      // Get new set of unique platforms from this filtered data
+      const newPlatforms = [...new Set(filteredData.map(row => row[PLATFORM_COL]))]
+        .filter(val => val)
+        .sort();
+
+      resetSelect(platformSelect);
+      newPlatforms.forEach(plat => {
+        const opt = document.createElement("option");
+        opt.value = plat;
+        opt.textContent = plat;
+        platformSelect.appendChild(opt);
+      });
+
+      // If the old selection is still valid, keep it. Otherwise default to "Any"
+      if (newPlatforms.includes(oldPlatformSelection)) {
+        platformSelect.value = oldPlatformSelection;
+      } else {
+        platformSelect.value = "Any";
+        selectedPlatform = "Any";
+      }
+    }
+
+    function updateDescriptionOptions() {
+      const oldDescSelection = descriptionSelect.value;
+      const filteredData = getFilteredData({ ignoreDescription: true });
+      // Get new set of unique descriptions from this filtered data
+      const newDescs = [...new Set(filteredData.map(row => row[DESCRIPTION_COL]))]
+        .filter(val => val)
+        .sort();
+
+      resetSelect(descriptionSelect);
+      newDescs.forEach(desc => {
+        const opt = document.createElement("option");
+        opt.value = desc;
+        opt.textContent = desc;
+        descriptionSelect.appendChild(opt);
+      });
+
+      if (newDescs.includes(oldDescSelection)) {
+        descriptionSelect.value = oldDescSelection;
+      } else {
+        descriptionSelect.value = "Any";
+        selectedDescription = "Any";
+      }
+    }
+
+    /*******************************************************
+     * 4) AUTOCOMPLETE
+     *******************************************************/
     const searchField = document.getElementById("searchField");
     const suggestionsBox = document.getElementById("suggestions");
-
+    
     searchField.addEventListener("input", function () {
-      const query = this.value.trim().toLowerCase();
-      if (!query) {
+      updateSuggestions();
+    });
+
+    // Hide suggestions on blur (with small delay to allow clicks)
+    searchField.addEventListener("blur", function() {
+      setTimeout(() => {
+        suggestionsBox.style.display = "none";
+      }, 150);
+    });
+
+    function updateSuggestions() {
+      const query = searchField.value.trim().toLowerCase();
+      const filteredData = getFilteredData();
+
+      let matchedPartNumbers = [];
+      if (query) {
+        matchedPartNumbers = filteredData
+          .map(row => row[PART_NUMBER_COL]?.toString())
+          .filter(val => val && val.toLowerCase().includes(query));
+      }
+
+      if (!query || matchedPartNumbers.length === 0) {
         suggestionsBox.style.display = "none";
         return;
       }
 
-      // Filter by the PART_NUMBER_HEADER in excelData
-      const matchedIDs = excelData
-        .map((row) => row[PART_NUMBER_HEADER]?.toString())
-        .filter((idValue) => idValue && idValue.toLowerCase().includes(query));
-
-      if (matchedIDs.length === 0) {
-        suggestionsBox.style.display = "none";
-        return;
-      }
-
-      // We'll only display the first 10 suggestions
+      // Limit to 10 suggestions
       const maxSuggestions = 10;
-      const displayedSuggestions = matchedIDs.slice(0, maxSuggestions);
+      const displayed = matchedPartNumbers.slice(0, maxSuggestions);
 
       suggestionsBox.innerHTML = "";
 
-      // Create each suggestion as a clickable div
-      displayedSuggestions.forEach((id) => {
+      displayed.forEach((pn) => {
         const item = document.createElement("div");
-        item.textContent = id;
+        item.textContent = pn;
         item.addEventListener("click", function () {
-          // On click, fill the searchField with the chosen ID
-          searchField.value = id;
+          // On click, fill the searchField
+          searchField.value = pn;
           suggestionsBox.innerHTML = "";
           suggestionsBox.style.display = "none";
         });
         suggestionsBox.appendChild(item);
       });
 
-      // If there are more than 10 matches, show a non-clickable "and X more results"
-      if (matchedIDs.length > maxSuggestions) {
-        const remainder = matchedIDs.length - maxSuggestions;
+      // If more than 10 matches, show a final row
+      if (matchedPartNumbers.length > maxSuggestions) {
+        const remainder = matchedPartNumbers.length - maxSuggestions;
         const moreItem = document.createElement("div");
         moreItem.textContent = `and ${remainder} more results`;
         moreItem.style.fontStyle = "italic";
@@ -192,59 +361,110 @@
       }
 
       suggestionsBox.style.display = "block";
-    });
+    }
 
-    // =================================================
-    // 4) SEARCH FUNCTIONALITY
-    // =================================================
+    /*******************************************************
+     * 5) SEARCH BUTTON & RESULTS
+     *******************************************************/
     const searchBtn = document.getElementById("searchBtn");
     const resultArea = document.getElementById("resultArea");
 
     searchBtn.addEventListener("click", function () {
-      const query = searchField.value.trim();
-      if (!query) {
-        resultArea.innerHTML = "<span class='error'>Please enter a part ID to search.</span>";
-        return;
-      }
-
-      // Find the row in excelData by PART_NUMBER_HEADER (exact match)
-      const foundRow = excelData.find(
-        (row) => row[PART_NUMBER_HEADER]?.toString() === query
-      );
-
-      if (!foundRow) {
-        resultArea.innerHTML = `<span class='error'>No part found with ${PART_NUMBER_HEADER}: ${query}</span>`;
-        return;
-      }
-
-      // Show the result
-      let displayHtml = `<h3>Part Found (${PART_NUMBER_HEADER}: ${query})</h3><ul>`;
-      // Display all key-value pairs
-      Object.keys(foundRow).forEach((key) => {
-        displayHtml += `<li><strong>${key}:</strong> ${foundRow[key]}</li>`;
-      });
-      displayHtml += "</ul>";
-
-      // Add Request Quote button
-      displayHtml += `<button id="requestQuoteBtn">Request Quote</button>`;
-
-      resultArea.innerHTML = displayHtml;
-
-      // Attach event listener for the "Request Quote" button
-      const requestQuoteBtn = document.getElementById("requestQuoteBtn");
-      requestQuoteBtn.addEventListener("click", () => openQuoteModal(foundRow));
+      renderResults();
     });
 
-    // =================================================
-    // 5) QUOTE MODAL HANDLING
-    // =================================================
+    // Renders the table of matching results
+    function renderResults() {
+      const query = searchField.value.trim();
+      const filtered = getFilteredData();
+
+      // If user typed something, further fuzzy filter by Part Number
+      let finalResults = filtered;
+      if (query) {
+        const qLower = query.toLowerCase();
+        finalResults = finalResults.filter(row =>
+          row[PART_NUMBER_COL]?.toString().toLowerCase().includes(qLower)
+        );
+      }
+
+      if (finalResults.length === 0) {
+        resultArea.innerHTML = `<span class='error'>No matches found.</span>`;
+        return;
+      }
+
+      // Build a table
+      let html = `<table>
+        <thead>
+          <tr>
+            <th>Part Number</th>
+            <th>Description</th>
+            <th>Platform</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+      `;
+      
+      // For each row, highlight the matched substring in Part Number
+      for (const row of finalResults) {
+        const highlightedPN = highlightMatch(row[PART_NUMBER_COL], query);
+        const desc = row[DESCRIPTION_COL] || "";
+        const plat = row[PLATFORM_COL] || "";
+
+        html += `<tr>
+          <td>${highlightedPN}</td>
+          <td>${desc}</td>
+          <td>${plat}</td>
+          <td><button class="requestQuoteBtn">Request Quote</button></td>
+        </tr>`;
+      }
+
+      html += `</tbody></table>`;
+      resultArea.innerHTML = html;
+
+      // Attach event listeners for each "Request Quote" button
+      const quoteButtons = document.querySelectorAll(".requestQuoteBtn");
+      quoteButtons.forEach((btn, index) => {
+        btn.addEventListener("click", () => {
+          // Open modal for the corresponding row
+          const rowData = finalResults[index];
+          openQuoteModal(rowData);
+        });
+      });
+    }
+
+    // Helper to highlight fuzzy match in the Part Number
+    function highlightMatch(text = "", query = "") {
+      if (!query) return text;
+      const regex = new RegExp(query, "gi");
+      return text.replace(regex, (match) => `<strong>${match}</strong>`);
+    }
+
+    // Returns data filtered by dropdown selections
+    // Pass optional flags { ignoreDescription: true } or { ignorePlatform: true }
+    // to skip filtering for that column when we re-populate the other.
+    function getFilteredData({ ignoreDescription = false, ignorePlatform = false } = {}) {
+      return excelData.filter(row => {
+        const descCheck = ignoreDescription || selectedDescription === "Any" 
+          ? true 
+          : row[DESCRIPTION_COL] === selectedDescription;
+        const platCheck = ignorePlatform || selectedPlatform === "Any"
+          ? true
+          : row[PLATFORM_COL] === selectedPlatform;
+        return descCheck && platCheck;
+      });
+    }
+
+    /*******************************************************
+     * 6) QUOTE MODAL HANDLING
+     *******************************************************/
     const quoteModal = document.getElementById("quoteModal");
     const closeModalBtn = document.getElementById("closeModalBtn");
     const submitQuoteBtn = document.getElementById("submitQuoteBtn");
     const quoteModalMessage = document.getElementById("quoteModalMessage");
 
     function openQuoteModal(partData) {
-      // Clear any previous messages and form fields
+      // Clear previous messages and form fields
       quoteModalMessage.textContent = "";
       document.getElementById("firstName").value = "";
       document.getElementById("lastName").value = "";
@@ -254,7 +474,6 @@
       // Show modal
       quoteModal.style.display = "block";
 
-      // Submit button logic
       submitQuoteBtn.onclick = function () {
         const firstName = document.getElementById("firstName").value.trim();
         const lastName = document.getElementById("lastName").value.trim();
@@ -276,10 +495,8 @@
           return;
         }
 
-        // Construct email subject and body
+        // Construct subject & body
         const subject = encodeURIComponent("New Quote Requested");
-        
-        // Build the details from partData into the body
         let bodyText = `Hello,
 I would like to request a quote for the following part:
 
@@ -298,9 +515,9 @@ I would like to request a quote for the following part:
 
         const body = encodeURIComponent(bodyText);
 
-        // This attempts to open the user's default mail client in a new tab
+        // Attempt to open in a new tab
         const mailtoLink = `mailto:stschebesta@gmail.com?subject=${subject}&body=${body}`;
-        window.open(mailtoLink, "_blank"); // Attempt to open in new tab
+        window.open(mailtoLink, "_blank");
 
         // Show success message
         quoteModalMessage.style.color = "green";
@@ -313,7 +530,7 @@ I would like to request a quote for the following part:
       quoteModal.style.display = "none";
     };
 
-    // Close when clicking outside modal content
+    // Close modal if click outside
     window.onclick = function (event) {
       if (event.target === quoteModal) {
         quoteModal.style.display = "none";
