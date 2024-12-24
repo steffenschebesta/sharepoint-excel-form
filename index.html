@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>JS Quote Form</title>
+  <style>
+    /* Basic styling for demonstration purposes */
+    #searchContainer {
+      margin-bottom: 16px;
+    }
+    #searchField {
+      width: 200px;
+    }
+    #suggestions {
+      border: 1px solid #ccc;
+      max-width: 200px;
+      display: none;
+      position: absolute;
+      background: #fff;
+      z-index: 999;
+    }
+    #suggestions div {
+      padding: 4px;
+      cursor: pointer;
+    }
+    #suggestions div:hover {
+      background: #e6e6e6;
+    }
+    #resultArea {
+      margin-top: 16px;
+    }
+    .error {
+      color: red;
+    }
+
+    /* Popup styles */
+    #quoteModal {
+      display: none; 
+      position: fixed; 
+      z-index: 9999;
+      left: 0; 
+      top: 0; 
+      width: 100%; 
+      height: 100%; 
+      overflow: auto; 
+      background-color: rgba(0,0,0,0.4);
+    }
+    #quoteModalContent {
+      background-color: #fefefe; 
+      margin: 15% auto; 
+      padding: 20px; 
+      border: 1px solid #888; 
+      width: 300px; 
+      position: relative;
+    }
+    #closeModalBtn {
+      position: absolute; 
+      top: 10px; 
+      right: 10px; 
+      cursor: pointer; 
+      font-weight: bold;
+    }
+    #quoteModalMessage {
+      margin-top: 12px;
+      color: green;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Search Parts & Request Quote</h1>
+  <div id="searchContainer">
+    <input type="text" id="searchField" placeholder="Type part ID..." />
+    <div id="suggestions"></div>
+    <button id="searchBtn">Search</button>
+  </div>
+
+  <div id="resultArea"></div>
+
+  <!-- The Modal / Popup -->
+  <div id="quoteModal">
+    <div id="quoteModalContent">
+      <span id="closeModalBtn">&times;</span>
+      <h2>Request Quote</h2>
+
+      <div>
+        <input type="text" id="firstName" placeholder="First Name" /><br/><br/>
+        <input type="text" id="lastName" placeholder="Last Name" /><br/><br/>
+        <input type="text" id="company" placeholder="Company Name" /><br/><br/>
+        <input type="email" id="email" placeholder="Email Address" /><br/><br/>
+      </div>
+
+      <button id="submitQuoteBtn">Submit</button>
+      <div id="quoteModalMessage"></div>
+    </div>
+  </div>
+
+  <!-- Include the xlsx library from a CDN (SheetJS) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+  <script>
+    // =================================================
+    // 1) CONFIGURATION
+    // =================================================
+    // Local file (make sure to serve via HTTP server)
+    const EXCEL_FILE_PATH = "Parts.xlsx";
+
+    // If the column name changes (in your Excel file header), update this variable:
+    const PART_NUMBER_HEADER = "Part Number";
+
+    // This will hold the parsed Excel rows (as objects)
+    let excelData = [];
+
+    // =================================================
+    // 2) FETCH & PARSE THE EXCEL FILE
+    // =================================================
+    async function loadExcelData() {
+      try {
+        const response = await fetch(EXCEL_FILE_PATH);
+        if (!response.ok) {
+          throw new Error("Could not fetch the Excel file. Check your local server path or file name.");
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+
+        // Use SheetJS to read the file
+        const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: "array" });
+        // Assuming the first sheet has the relevant data
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+
+        // Convert to JSON. { header:1 } would give arrays; we use default to get an array of objects.
+        excelData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+      } catch (err) {
+        console.error("Error loading Excel file:", err);
+      }
+    }
+
+    // Call this at the start (once the page is loaded)
+    loadExcelData();
+
+    // =================================================
+    // 3) AUTOCOMPLETE SUGGESTIONS
+    // =================================================
+    const searchField = document.getElementById("searchField");
+    const suggestionsBox = document.getElementById("suggestions");
+
+    searchField.addEventListener("input", function () {
+      const query = this.value.trim().toLowerCase();
+      if (!query) {
+        suggestionsBox.style.display = "none";
+        return;
+      }
+
+      // Filter by the PART_NUMBER_HEADER in excelData
+      const matchedIDs = excelData
+        .map((row) => row[PART_NUMBER_HEADER]?.toString())
+        .filter((idValue) => idValue && idValue.toLowerCase().includes(query));
+
+      if (matchedIDs.length === 0) {
+        suggestionsBox.style.display = "none";
+        return;
+      }
+
+      // We'll only display the first 10 suggestions
+      const maxSuggestions = 10;
+      const displayedSuggestions = matchedIDs.slice(0, maxSuggestions);
+
+      suggestionsBox.innerHTML = "";
+
+      // Create each suggestion as a clickable div
+      displayedSuggestions.forEach((id) => {
+        const item = document.createElement("div");
+        item.textContent = id;
+        item.addEventListener("click", function () {
+          // On click, fill the searchField with the chosen ID
+          searchField.value = id;
+          suggestionsBox.innerHTML = "";
+          suggestionsBox.style.display = "none";
+        });
+        suggestionsBox.appendChild(item);
+      });
+
+      // If there are more than 10 matches, show a non-clickable "and X more results"
+      if (matchedIDs.length > maxSuggestions) {
+        const remainder = matchedIDs.length - maxSuggestions;
+        const moreItem = document.createElement("div");
+        moreItem.textContent = `and ${remainder} more results`;
+        moreItem.style.fontStyle = "italic";
+        moreItem.style.cursor = "default";
+        suggestionsBox.appendChild(moreItem);
+      }
+
+      suggestionsBox.style.display = "block";
+    });
+
+    // =================================================
+    // 4) SEARCH FUNCTIONALITY
+    // =================================================
+    const searchBtn = document.getElementById("searchBtn");
+    const resultArea = document.getElementById("resultArea");
+
+    searchBtn.addEventListener("click", function () {
+      const query = searchField.value.trim();
+      if (!query) {
+        resultArea.innerHTML = "<span class='error'>Please enter a part ID to search.</span>";
+        return;
+      }
+
+      // Find the row in excelData by PART_NUMBER_HEADER (exact match)
+      const foundRow = excelData.find(
+        (row) => row[PART_NUMBER_HEADER]?.toString() === query
+      );
+
+      if (!foundRow) {
+        resultArea.innerHTML = `<span class='error'>No part found with ${PART_NUMBER_HEADER}: ${query}</span>`;
+        return;
+      }
+
+      // Show the result
+      let displayHtml = `<h3>Part Found (${PART_NUMBER_HEADER}: ${query})</h3><ul>`;
+      // Display all key-value pairs
+      Object.keys(foundRow).forEach((key) => {
+        displayHtml += `<li><strong>${key}:</strong> ${foundRow[key]}</li>`;
+      });
+      displayHtml += "</ul>";
+
+      // Add Request Quote button
+      displayHtml += `<button id="requestQuoteBtn">Request Quote</button>`;
+
+      resultArea.innerHTML = displayHtml;
+
+      // Attach event listener for the "Request Quote" button
+      const requestQuoteBtn = document.getElementById("requestQuoteBtn");
+      requestQuoteBtn.addEventListener("click", () => openQuoteModal(foundRow));
+    });
+
+    // =================================================
+    // 5) QUOTE MODAL HANDLING
+    // =================================================
+    const quoteModal = document.getElementById("quoteModal");
+    const closeModalBtn = document.getElementById("closeModalBtn");
+    const submitQuoteBtn = document.getElementById("submitQuoteBtn");
+    const quoteModalMessage = document.getElementById("quoteModalMessage");
+
+    function openQuoteModal(partData) {
+      // Clear any previous messages and form fields
+      quoteModalMessage.textContent = "";
+      document.getElementById("firstName").value = "";
+      document.getElementById("lastName").value = "";
+      document.getElementById("company").value = "";
+      document.getElementById("email").value = "";
+
+      // Show modal
+      quoteModal.style.display = "block";
+
+      // Submit button logic
+      submitQuoteBtn.onclick = function () {
+        const firstName = document.getElementById("firstName").value.trim();
+        const lastName = document.getElementById("lastName").value.trim();
+        const company = document.getElementById("company").value.trim();
+        const email = document.getElementById("email").value.trim();
+
+        // Basic presence check
+        if (!firstName || !lastName || !company || !email) {
+          quoteModalMessage.style.color = "red";
+          quoteModalMessage.textContent = "Please fill in all fields.";
+          return;
+        }
+
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          quoteModalMessage.style.color = "red";
+          quoteModalMessage.textContent = "Please enter a valid email address.";
+          return;
+        }
+
+        // Construct email subject and body
+        const subject = encodeURIComponent("New Quote Requested");
+        
+        // Build the details from partData into the body
+        let bodyText = `Hello,
+I would like to request a quote for the following part:
+
+`;
+        // Add part details
+        for (const [k, v] of Object.entries(partData)) {
+          bodyText += `${k}: ${v}\n`;
+        }
+
+        // Add requestor info
+        bodyText += `\nRequestor Information:\n`;
+        bodyText += `First Name: ${firstName}\n`;
+        bodyText += `Last Name: ${lastName}\n`;
+        bodyText += `Company: ${company}\n`;
+        bodyText += `Email: ${email}\n`;
+
+        const body = encodeURIComponent(bodyText);
+
+        // This attempts to open the user's default mail client in a new tab
+        const mailtoLink = `mailto:stschebesta@gmail.com?subject=${subject}&body=${body}`;
+        window.open(mailtoLink, "_blank"); // Attempt to open in new tab
+
+        // Show success message
+        quoteModalMessage.style.color = "green";
+        quoteModalMessage.textContent = "Success! The quote request has been triggered.";
+      };
+    }
+
+    // Close modal on X button
+    closeModalBtn.onclick = function () {
+      quoteModal.style.display = "none";
+    };
+
+    // Close when clicking outside modal content
+    window.onclick = function (event) {
+      if (event.target === quoteModal) {
+        quoteModal.style.display = "none";
+      }
+    };
+  </script>
+</body>
+</html>
