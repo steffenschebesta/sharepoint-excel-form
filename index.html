@@ -87,16 +87,10 @@
 </head>
 <body>
 
-  <h1>Search R&O Capability / Part Number &amp; Request Quote</h1>
+  <h1>Search Parts &amp; Request Quote</h1>
 
-  <!-- 1) FILTERS -->
+  <!-- 1) FILTERS: Only "Platform" -->
   <div id="filtersContainer">
-    <label for="descriptionSelect">R&O Capability / PN Description:</label>
-    <select id="descriptionSelect">
-      <option value="Any" selected>Any</option>
-      <!-- More options added dynamically -->
-    </select>
-
     <label for="platformSelect">Aircraft / Engine Platform:</label>
     <select id="platformSelect">
       <option value="Any" selected>Any</option>
@@ -108,7 +102,7 @@
   <div id="searchContainer">
     <input type="text" id="searchField" placeholder="Type part number..." />
     <div id="suggestions"></div>
-    <button id="searchBtn">Search R&O Capability / Part Number</button>
+    <button id="searchBtn">Search</button>
   </div>
 
   <!-- 3) RESULTS AREA (TABLE) -->
@@ -140,7 +134,7 @@
      * CONFIGURATION
      *******************************************************/
     const EXCEL_FILE_PATH = "Parts.xlsx";
-    
+
     // Column headers in the Excel:
     const PART_NUMBER_COL = "Part Number";
     const DESCRIPTION_COL = "Description";
@@ -149,8 +143,7 @@
     // This will hold the parsed Excel rows (array of objects)
     let excelData = [];
 
-    // Keep track of the current filters
-    let selectedDescription = "Any";
+    // Keep track of the current platform filter
     let selectedPlatform = "Any";
 
     /*******************************************************
@@ -171,8 +164,8 @@
         // Convert to array of objects
         excelData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
 
-        // Once loaded, populate the dropdown options
-        populateDropdowns();
+        // Once loaded, populate the platform dropdown
+        populatePlatformDropdown();
       } catch (err) {
         console.error("Error loading Excel file:", err);
       }
@@ -182,33 +175,20 @@
     loadExcelData();
 
     /*******************************************************
-     * 2) POPULATE DROPDOWNS
+     * 2) POPULATE PLATFORM DROPDOWN
      *******************************************************/
-    const descriptionSelect = document.getElementById("descriptionSelect");
     const platformSelect = document.getElementById("platformSelect");
 
-    function populateDropdowns() {
-      // Get unique values for Description
-      const uniqueDescriptions = [...new Set(excelData.map(row => row[DESCRIPTION_COL]))]
-        .filter(val => val) // remove empty
-        .sort();
-
+    function populatePlatformDropdown() {
       // Get unique values for Platform
       const uniquePlatforms = [...new Set(excelData.map(row => row[PLATFORM_COL]))]
         .filter(val => val)
         .sort();
-      
-      // Reset the dropdowns (keep "Any")
-      resetSelect(descriptionSelect);
-      resetSelect(platformSelect);
 
-      // Add each unique description
-      uniqueDescriptions.forEach(desc => {
-        const opt = document.createElement("option");
-        opt.value = desc;
-        opt.textContent = desc;
-        descriptionSelect.appendChild(opt);
-      });
+      // Reset the dropdown (keep "Any")
+      while (platformSelect.options.length > 1) {
+        platformSelect.remove(1);
+      }
 
       // Add each unique platform
       uniquePlatforms.forEach(plat => {
@@ -219,85 +199,16 @@
       });
     }
 
-    function resetSelect(selectElem) {
-      // Keep the first child "Any", remove others
-      while (selectElem.options.length > 1) {
-        selectElem.remove(1);
-      }
-    }
-
     /*******************************************************
-     * 3) SYNC DROPDOWNS (DYNAMIC FILTERING)
+     * 3) PLATFORM DROPDOWN EVENTS
      *******************************************************/
-    descriptionSelect.addEventListener("change", (e) => {
-      selectedDescription = e.target.value;
-      // Filter the possible platform options based on selection
-      updatePlatformOptions();
-      // Also update the suggestions
-      updateSuggestions();
-      // Clear results
-      document.getElementById("resultArea").innerHTML = "";
-    });
-
     platformSelect.addEventListener("change", (e) => {
       selectedPlatform = e.target.value;
-      // Filter the possible description options based on selection
-      updateDescriptionOptions();
-      // Update suggestions
+      // Update suggestions (for part number) after changing platform
       updateSuggestions();
-      // Clear results
+      // Clear any existing table results
       document.getElementById("resultArea").innerHTML = "";
     });
-
-    function updatePlatformOptions() {
-      // We want to keep track of the user's old selection if valid
-      const oldPlatformSelection = platformSelect.value;
-      const filteredData = getFilteredData({ ignorePlatform: true });
-      // Get new set of unique platforms from this filtered data
-      const newPlatforms = [...new Set(filteredData.map(row => row[PLATFORM_COL]))]
-        .filter(val => val)
-        .sort();
-
-      resetSelect(platformSelect);
-      newPlatforms.forEach(plat => {
-        const opt = document.createElement("option");
-        opt.value = plat;
-        opt.textContent = plat;
-        platformSelect.appendChild(opt);
-      });
-
-      // If the old selection is still valid, keep it. Otherwise default to "Any"
-      if (newPlatforms.includes(oldPlatformSelection)) {
-        platformSelect.value = oldPlatformSelection;
-      } else {
-        platformSelect.value = "Any";
-        selectedPlatform = "Any";
-      }
-    }
-
-    function updateDescriptionOptions() {
-      const oldDescSelection = descriptionSelect.value;
-      const filteredData = getFilteredData({ ignoreDescription: true });
-      // Get new set of unique descriptions from this filtered data
-      const newDescs = [...new Set(filteredData.map(row => row[DESCRIPTION_COL]))]
-        .filter(val => val)
-        .sort();
-
-      resetSelect(descriptionSelect);
-      newDescs.forEach(desc => {
-        const opt = document.createElement("option");
-        opt.value = desc;
-        opt.textContent = desc;
-        descriptionSelect.appendChild(opt);
-      });
-
-      if (newDescs.includes(oldDescSelection)) {
-        descriptionSelect.value = oldDescSelection;
-      } else {
-        descriptionSelect.value = "Any";
-        selectedDescription = "Any";
-      }
-    }
 
     /*******************************************************
      * 4) AUTOCOMPLETE
@@ -305,35 +216,64 @@
     const searchField = document.getElementById("searchField");
     const suggestionsBox = document.getElementById("suggestions");
     
+    // On focus, show suggestions (even if empty input)
+    searchField.addEventListener("focus", function() {
+      updateSuggestions();
+    });
+
+    // On input, update suggestions
     searchField.addEventListener("input", function () {
       updateSuggestions();
     });
 
-    // Hide suggestions on blur (with small delay to allow clicks)
+    // Hide suggestions on blur (with a small delay to allow clicks on suggestions)
     searchField.addEventListener("blur", function() {
       setTimeout(() => {
         suggestionsBox.style.display = "none";
       }, 150);
     });
 
+    // Trigger search on Enter key
+    searchField.addEventListener("keydown", function(e) {
+      if (e.key === "Enter") {
+        // Prevent form submission or other default
+        e.preventDefault();
+        // Trigger the same function as the Search button
+        renderResults();
+      }
+    });
+
     function updateSuggestions() {
+      // If searchField doesn't have focus, hide & return
+      if (document.activeElement !== searchField) {
+        suggestionsBox.style.display = "none";
+        return;
+      }
+
       const query = searchField.value.trim().toLowerCase();
       const filteredData = getFilteredData();
 
-      let matchedPartNumbers = [];
-      if (query) {
+      // If no query, show all part numbers from the filtered data (up to 20)
+      let matchedPartNumbers;
+      if (!query) {
+        matchedPartNumbers = filteredData
+          .map(row => row[PART_NUMBER_COL]?.toString())
+          .filter(val => val);
+      } else {
+        // Fuzzy match
         matchedPartNumbers = filteredData
           .map(row => row[PART_NUMBER_COL]?.toString())
           .filter(val => val && val.toLowerCase().includes(query));
       }
 
-      if (!query || matchedPartNumbers.length === 0) {
+      // If there are no matches, hide suggestions
+      if (matchedPartNumbers.length === 0) {
         suggestionsBox.style.display = "none";
         return;
       }
 
-      // Limit to 10 suggestions
-      const maxSuggestions = 10;
+      // Limit to 20 suggestions
+      const maxSuggestions = 20;
       const displayed = matchedPartNumbers.slice(0, maxSuggestions);
 
       suggestionsBox.innerHTML = "";
@@ -350,7 +290,7 @@
         suggestionsBox.appendChild(item);
       });
 
-      // If more than 10 matches, show a final row
+      // If more than 20 matches, show a final row
       if (matchedPartNumbers.length > maxSuggestions) {
         const remainder = matchedPartNumbers.length - maxSuggestions;
         const moreItem = document.createElement("div");
@@ -435,23 +375,19 @@
 
     // Helper to highlight fuzzy match in the Part Number
     function highlightMatch(text = "", query = "") {
-      if (!query) return text;
+      if (!query) return text; // if no query, just return the text
       const regex = new RegExp(query, "gi");
       return text.replace(regex, (match) => `<strong>${match}</strong>`);
     }
 
-    // Returns data filtered by dropdown selections
-    // Pass optional flags { ignoreDescription: true } or { ignorePlatform: true }
-    // to skip filtering for that column when we re-populate the other.
-    function getFilteredData({ ignoreDescription = false, ignorePlatform = false } = {}) {
+    // Returns data filtered by the selected platform
+    function getFilteredData() {
       return excelData.filter(row => {
-        const descCheck = ignoreDescription || selectedDescription === "Any" 
-          ? true 
-          : row[DESCRIPTION_COL] === selectedDescription;
-        const platCheck = ignorePlatform || selectedPlatform === "Any"
-          ? true
-          : row[PLATFORM_COL] === selectedPlatform;
-        return descCheck && platCheck;
+        // Only filter by platform if user didn't select "Any"
+        if (selectedPlatform !== "Any" && row[PLATFORM_COL] !== selectedPlatform) {
+          return false;
+        }
+        return true;
       });
     }
 
